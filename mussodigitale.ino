@@ -49,6 +49,7 @@ const int minSetPoint = 0;      // minimum user setpoint
 const int maxSetPoint = 9999;   // maximum user setpoint
 const int logSize = 120;        // currentReading log size
 const int beepPeriod = 25;      // period to play beep, 25 = 1 second
+const int timeBetweenBeeps = 750; // time between beeps, 750 = 30s
 const int wdtTimeout = 1000;    //time in ms to trigger the watchdog
 const unsigned int currentLogPeriodMS = 1000; // update log 1 time a second
 const unsigned int animationPeriodMS = 500;   // update motor animation 2 times a second
@@ -63,6 +64,7 @@ int motorAnimationIndex = 0;    // selected motor animation character
 int currentLog[logSize];      // log to store current readings
 int currentLogIndex = 0;      // points to the next index to write to
 int playBeep = 0;         // sound buzzer while greater than 0
+int counterBetweenBeeps = 0; // TODO
 unsigned int logTicksMS = 0;    // time elapsed counter for log
 unsigned int animationTicksMS = 0;  // time elapsed counter for motor animation
 int oldEncoderCount = 0;      // previous encoder value
@@ -157,11 +159,19 @@ void loop()
     display.display();
 
     // update buzzer
-    if(playBeep > 0){      
+    if(playBeep > 0){
       digitalWrite(BUZZER_PIN, HIGH);
       playBeep--;
-      if(playBeep == 0)        
-        digitalWrite(BUZZER_PIN, LOW);     
+      if(playBeep <= 0)
+      {
+        digitalWrite(BUZZER_PIN, LOW);
+        counterBetweenBeeps = timeBetweenBeeps;
+      }
+    }
+    else if(counterBetweenBeeps > 0){
+      counterBetweenBeeps--;
+      if(counterBetweenBeeps <= 0)
+        playBeep = beepPeriod;
     }
 
     // update animation
@@ -285,8 +295,16 @@ void printGraph()
 // start button handler
 void startPressed(Button2& btn)
 {
-  motorOn = !motorOn;
-  triggerCount = 0;
+  if((playBeep > 0) || (counterBetweenBeeps > 0))
+  {
+    playBeep = 0;
+    counterBetweenBeeps = 0;
+  }
+  else
+  {
+    motorOn = !motorOn;
+    triggerCount = 0;
+  }
 }
 
 // encoder button handler
