@@ -56,6 +56,7 @@ const unsigned int animationPeriodMS = 500;   // update motor animation 2 times 
 const unsigned int refreshPeriodMS = 40;      // update screen 25 times a second
 
 // global variables
+float alpha = 0.6;
 unsigned int currentReading = 0;  // current reading from adc
 int setPoint = 0;           // user setpoint to turn off motor
 int triggerCount = 0;       // number of consecutive values over setpoint
@@ -378,5 +379,5 @@ void getCurrentReading()
   if (adc0 > 9999)
     adc0 = 9999;
  
-  currentReading = adc0;
+  currentReading = (alpha * adc0) + ((1 - alpha) * currentReading);
 }
