@@ -5,6 +5,7 @@
 #include <Wire.h>               // screen and adc
 #include <ESP32Encoder.h>       // encoder
 #include <Button2.h>            // start and encoder button
+#include <morse.h>
 #include "logo_2_inv.h"         // splash screen logo
 
 // screen 
@@ -36,6 +37,7 @@ Button2 startBtn;
 
 // buzzer
 #define BUZZER_PIN 4
+LEDMorseSender morseSender(BUZZER_PIN);
 
 // adc
 Adafruit_ADS1115 ads;
@@ -66,12 +68,14 @@ const char motorAnimation[4] = {0x2F, 0x2D, 0x5C, 0x7C}; // motor animation char
 const int minSetPoint = 0;      // minimum user setpoint
 const int maxSetPoint = 9999;   // maximum user setpoint
 const int logSize = 120;        // currentReading log size
-const int beepPeriod = 25;      // period to play beep, 25 = 1 second
-const int timeBetweenBeeps = 750; // time between beeps, 750 = 30s
+// const int beepPeriod = 25;      // period to play beep, 25 = 1 second
+// const int timeBetweenBeeps = 750; // time between beeps, 750 = 30s
 const int wdtTimeout = 1000;    //time in ms to trigger the watchdog
+const unsigned int buzzerPeriodMS = 30000;    // use the buzzer every 30s
 const unsigned int currentLogPeriodMS = 1000; // update log 1 time a second
 const unsigned int animationPeriodMS = 500;   // update motor animation 2 times a second
 const unsigned int refreshPeriodMS = 40;      // update screen 25 times a second
+const char morseMessage[] = "cq cq musso";
 
 // global variables
 float alpha = 0.6;
@@ -82,8 +86,7 @@ int editMode = 0;           // 0=off, 1=edit
 int motorAnimationIndex = 0;    // selected motor animation character
 int currentLog[logSize];      // log to store current readings
 int currentLogIndex = 0;      // points to the next index to write to
-int playBeep = 0;         // sound buzzer while greater than 0
-int counterBetweenBeeps = 0; // TODO
+int buzzerTickMS = 0;         // Time elapsed since last buzzer activity
 unsigned int logTicksMS = 0;    // time elapsed counter for log
 unsigned int animationTicksMS = 0;  // time elapsed counter for motor animation
 int oldEncoderCount = 0;      // previous encoder value
@@ -112,8 +115,10 @@ void setup()
   digitalWrite(RELAY_2_PIN, LOW);
 
   // setup buzzer
-  pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW);
+  morseSender.setup();
+  morseSender.setMessage(morseMessage);
+  //pinMode(BUZZER_PIN, OUTPUT);
+  //digitalWrite(BUZZER_PIN, LOW);
 
   // setup start button, default pullup
   startBtn.begin(START_BTN_PIN);
@@ -159,8 +164,13 @@ void loop()
     case ChurnState::Done:
     case ChurnState::Idle:
       digitalWrite(RELAY_1_PIN, LOW);
-
+      break;
   }
+
+  if(!morseSender.continueSending())
+	{
+    // Done sending. wait 30s or so
+	}
   
   // Slower actions to be performed periodically
   currentMS = millis();
@@ -171,6 +181,7 @@ void loop()
     startMS = currentMS; 
     logTicksMS += diffMS;
     animationTicksMS += diffMS;
+    buzzerTickMS += diffMS;
     
     // update current from adc
     getCurrentReading();
@@ -182,20 +193,20 @@ void loop()
     display.display();
 
     // update buzzer
-    if(playBeep > 0){
-      digitalWrite(BUZZER_PIN, HIGH);
-      playBeep--;
-      if(playBeep <= 0)
-      {
-        digitalWrite(BUZZER_PIN, LOW);
-        counterBetweenBeeps = timeBetweenBeeps;
-      }
-    }
-    else if(counterBetweenBeeps > 0){
-      counterBetweenBeeps--;
-      if(counterBetweenBeeps <= 0)
-        playBeep = beepPeriod;
-    }
+    // if(playBeep > 0){
+    //   digitalWrite(BUZZER_PIN, HIGH);
+    //   playBeep--;
+    //   if(playBeep <= 0)
+    //   {
+    //     digitalWrite(BUZZER_PIN, LOW);
+    //     counterBetweenBeeps = timeBetweenBeeps;
+    //   }
+    // }
+    // else if(counterBetweenBeeps > 0){
+    //   counterBetweenBeeps--;
+    //   if(counterBetweenBeeps <= 0)
+    //     playBeep = beepPeriod;
+    // }
 
     // update animation
     if (animationTicksMS >= animationPeriodMS)
@@ -216,7 +227,13 @@ void loop()
 
       checkSetpoint();
       logTicksMS = 0;
-    }        
+    }
+
+    if(buzzerTickMS >= buzzerPeriodMS)
+    {
+      morseSender.startSending();
+      buzzerTickMS = 0;
+    }
   }
 }
 
@@ -318,16 +335,28 @@ void printGraph()
 // start button handler
 void startPressed(Button2& btn)
 {
-  if((playBeep > 0) || (counterBetweenBeeps > 0))
+  triggerCount = 0;
+  switch(churnState)
   {
-    playBeep = 0;
-    counterBetweenBeeps = 0;
+    case ChurnState::Idle:
+      churnState = ChurnState::Churning;
+      break;
+    case ChurnState::Churning:
+    case ChurnState::Done:
+      // TODO stop morseSender
+      churnState = ChurnState::Idle;
+      break;
   }
-  else
-  {
-    motorOn = !motorOn;
-    triggerCount = 0;
-  }
+  // if((playBeep > 0) || (counterBetweenBeeps > 0))
+  // {
+  //   playBeep = 0;
+  //   counterBetweenBeeps = 0;
+  // }
+  // else
+  // {
+  //   motorOn = !motorOn;
+  //   triggerCount = 0;
+  // }
 }
 
 // encoder button handler
@@ -387,7 +416,8 @@ void checkSetpoint()
   {
     triggerCount = 0;
     churnState = ChurnState::Done;
-    playBeep = beepPeriod;
+    morseSender.startSending();
+    //playBeep = beepPeriod;
   }  
 }
 
