@@ -43,6 +43,24 @@ Adafruit_ADS1115 ads;
 // store setpoint in flash
 Preferences preferences;
 
+// State machines
+enum class ChurnState
+{
+  Idle,
+  Churning,
+  Done
+};
+
+ChurnState churnState = ChurnState::Idle;
+
+enum class EditState
+{
+  Set,
+  Editing
+};
+
+EditState editState = EditState::Set;
+
 // global constants
 const char motorAnimation[4] = {0x2F, 0x2D, 0x5C, 0x7C}; // motor animation characters
 const int minSetPoint = 0;      // minimum user setpoint
@@ -81,12 +99,12 @@ void setup()
   // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
   if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS))
     for(;;); // Don't proceed, loop forever
-    
+
   // setup adc
   //ads.setGain(GAIN_ONE); // 1x gain   +/- 4.096V  1 bit = 0.125mV
   ads.setGain(GAIN_TWO); // 2x gain   +/- 2.048V  1 bit = 0.0625mV
   ads.begin();
-    
+
   // setup relays
   pinMode(RELAY_1_PIN, OUTPUT);
   pinMode(RELAY_2_PIN, OUTPUT);
@@ -100,7 +118,7 @@ void setup()
   // setup start button, default pullup
   startBtn.begin(START_BTN_PIN);
   startBtn.setPressedHandler(startPressed);
-  
+
   // setup encoder button, default pullup
   encoderBtn.begin(ENCODER_BTN_PIN);
   encoderBtn.setPressedHandler(encoderPressed);
@@ -125,26 +143,30 @@ void setup()
 
 void loop()
 {
-  // update buttons
+  // Fast actions to be performed at every cycle
+  // Buttons
   encoderBtn.loop();
   startBtn.loop();
-
-  // update setpoint
-  if (editMode)
+  // Encoder setpoint
+  if (editState == EditState::Editing)
     encoderUpdate();
-    
-  // update relay
-  if(motorOn)
-    digitalWrite(RELAY_1_PIN, HIGH);
-  else
-    digitalWrite(RELAY_1_PIN, LOW);
+  // Motor status
+  switch(churnState)
+  {
+    case ChurnState::Churning:
+      digitalWrite(RELAY_1_PIN, HIGH);
+      break;
+    case ChurnState::Done:
+    case ChurnState::Idle:
+      digitalWrite(RELAY_1_PIN, LOW);
+
+  }
   
-  
-  // calculate refresh period
+  // Slower actions to be performed periodically
   currentMS = millis();
   diffMS = currentMS - startMS;
   if (diffMS >= refreshPeriodMS)
-  { 
+  {
     // update times for refresh periods
     startMS = currentMS; 
     logTicksMS += diffMS;
@@ -153,7 +175,7 @@ void loop()
     // update current from adc
     getCurrentReading();
 
-    // update display
+    // update display with current reading
     display.clearDisplay();
     printCurrent();
     printGraph();
@@ -176,7 +198,8 @@ void loop()
     }
 
     // update animation
-    if (animationTicksMS >= animationPeriodMS){
+    if (animationTicksMS >= animationPeriodMS)
+    {
       motorAnimationIndex++;
       if(motorAnimationIndex >= 4)
         motorAnimationIndex = 0;
@@ -191,11 +214,10 @@ void loop()
       if(currentLogIndex >= logSize)
         currentLogIndex = 0;
 
-      checkSetpoint();  
+      checkSetpoint();
       logTicksMS = 0;
     }        
   }
-    
 }
 
 // print the current(top row) to the screen
@@ -220,7 +242,7 @@ void printCurrent()
   display.print(' ');
 
 
-  if(editMode) // editing upper 2 digits
+  if(editState == EditState::Editing) // editing upper 2 digits
   {
     // draw colored background
     display.fillRect(59, 0, 24, 16, WHITE);   
@@ -311,16 +333,17 @@ void startPressed(Button2& btn)
 // encoder button handler
 void encoderPressed(Button2& btn)
 {
-  if(editMode) // we exit edit mode and save the value
+  switch(editState)
   {
-    editMode = 0;
-    preferences.putInt("setpoint", setPoint);
-  }
-  else // we enter edit mode
-  {
-    oldEncoderCount = 0;// reset encoder count
-    encoder.setCount(0);// reset encoder count
-    editMode = 1;
+    case EditState::Editing: // we exit edit mode and save the value
+      editState = EditState::Set;
+      preferences.putInt("setpoint", setPoint);
+      break;
+    case EditState::Set:
+      oldEncoderCount = 0; // reset encoder count
+      encoder.setCount(0); // reset encoder count
+      editState = EditState::Editing;
+      break;
   }
 }
 
@@ -338,7 +361,7 @@ void encoderUpdate()
   oldEncoderCount = encCnt;
 
   // update the setpoint
-  if(editMode)
+  if(editState == EditState::Editing)
     newSetPoint = setPoint + (100 * dir);
   
   // clip setpoint at min and max
@@ -363,21 +386,19 @@ void checkSetpoint()
   if(triggerCount >= 3)
   {
     triggerCount = 0;
-    if(motorOn)
-    {
-      motorOn = false;
-      playBeep = beepPeriod;
-    }
+    churnState = ChurnState::Done;
+    playBeep = beepPeriod;
   }  
 }
 
 // get the current reading from adc
 void getCurrentReading()
 {
-  // TODO: maybe add some filtering here
   int16_t adc0 = ads.readADC_SingleEnded(0);
   if (adc0 > 9999)
     adc0 = 9999;
  
+  // first order low pass filter
+  // TODO: remove unnecessary use of floating point
   currentReading = (alpha * adc0) + ((1 - alpha) * currentReading);
 }
